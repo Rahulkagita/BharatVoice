@@ -1,6 +1,9 @@
 # Extensions build output
 dist/
 
+# Web build output
+dist-web/
+
 # Dependencies
 node_modules/
 

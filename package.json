@@ -5,9 +5,15 @@
   "description": "Multilingual, voice-first accessibility assistant for Indian government websites, powered by a FastAPI backend and Google Gemini.",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:web": "vite --config vite.config.web.ts",
+    "build": "npm run build:extension",
+    "build:extension": "vite build",
+    "build:web": "vite build --config vite.config.web.ts",
+    "build:all": "npm run build:extension && npm run build:web",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "npm run typecheck:extension && npm run typecheck:web",
+    "typecheck:extension": "tsc -p tsconfig.extension.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit"
   },
   "dependencies": {
     "react": "^19.3.1",

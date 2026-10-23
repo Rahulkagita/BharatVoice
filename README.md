@@ -229,7 +229,9 @@ exact `chrome-extension://<id>` origin to `backend/.env` `CORS_ORIGINS`.
 # Frontend
 cd E:\BharatVoice
 npm run typecheck
-npm run build
+npm run build              # Chrome extension -> dist/
+npm run build:web          # Web application -> dist-web/
+npm run dev:web            # Web dev server; proxies /api to localhost:8000
 
 # Backend tests (offline; no key or network required)
 cd E:\BharatVoice\backend
@@ -241,6 +243,11 @@ cd E:\BharatVoice\backend
 # Start backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+The web build calls `/api/chat` on its own origin. During development, Vite
+proxies `/api` to the local FastAPI server; in production, route `/api/*` to
+the backend at the hosting or reverse-proxy layer. The extension build keeps
+its absolute, validated backend origin and generated manifest/CSP.
 
 Backend tests use a fake provider/client. They cover validation, language
 handling, missing keys, timeouts, auth/quota/unavailable errors, rate limiting,
