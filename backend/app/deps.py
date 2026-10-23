@@ -1,58 +1,75 @@
 """Request-level dependencies and abuse protection.
 
-- Verifies the Gemini API key is configured before handling requests.
+- Reports whether the Gemini API key is configured.
 - Simple in-memory per-client-IP rate limiter (no database, no external state).
+
+Limitations of the rate limiter: it lives in this process only. Multiple
+uvicorn workers or multiple backend instances each keep their own counters, so
+it is not a shared/distributed rate limit. It is a development safeguard, not
+a substitute for an API gateway or shared store in production.
 """
+
+import threading
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 
 from .config import get_settings
 
 
 class RateLimiter:
-    """Token-bucket-ish sliding window limiter keyed by client IP."""
+    """Sliding-window limiter keyed by client IP."""
 
     def __init__(self, max_requests: int, window_seconds: int = 60) -> None:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._hits: Dict[str, Deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+        self._last_cleanup = time.monotonic()
 
     def allow(self, client_id: str) -> bool:
         now = time.monotonic()
         window_start = now - self.window_seconds
-        hits = self._hits[client_id]
-        # Drop hits outside the window.
-        while hits and hits[0] < window_start:
-            hits.popleft()
-        if len(hits) >= self.max_requests:
-            return False
-        hits.append(now)
-        return True
+        with self._lock:
+            hits = self._hits[client_id]
+            # Drop hits outside the window.
+            while hits and hits[0] < window_start:
+                hits.popleft()
+            if len(hits) >= self.max_requests:
+                return False
+            hits.append(now)
+            self._cleanup(now, window_start)
+            return True
+
+    def _cleanup(self, now: float, window_start: float) -> None:
+        """Periodically drop empty client buckets to bound memory use."""
+        if now - self._last_cleanup < max(self.window_seconds, 60):
+            return
+        self._last_cleanup = now
+        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] < window_start]
+        for key in stale:
+            del self._hits[key]
 
 
-_rate_limiter = RateLimiter(
-    max_requests=get_settings().RATE_LIMIT_REQUESTS_PER_MINUTE
-)
+def api_key_configured() -> bool:
+    """Return True when a Gemini API key is present. Never returns the value."""
+    return bool(get_settings().GEMINI_API_KEY)
 
 
-def require_api_key() -> None:
-    """Raise 503 if the backend is not configured with a Gemini API key."""
-    settings = get_settings()
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The AI backend is not configured. Please contact the administrator.",
-        )
+def get_client_id(request: Request) -> str:
+    """Return the client IP. Behind a proxy, configure trusted forwarded headers."""
+    return request.client.host if request.client else "unknown"
 
 
-def rate_limit(request: Request) -> None:
-    """Apply a simple per-IP rate limit; raise 429 when exceeded."""
-    client_id = request.client.host if request.client else "unknown"
-    if not _rate_limiter.allow(client_id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests. Please wait a moment and try again.",
-        )
+_rate_limiter = RateLimiter(max_requests=get_settings().RATE_LIMIT_REQUESTS_PER_MINUTE)
+
+
+def get_rate_limiter() -> RateLimiter:
+    return _rate_limiter
+
+
+def rate_limit_allows(request: Request) -> bool:
+    """Apply the per-IP rate limit and return False when it is exceeded."""
+    return get_rate_limiter().allow(get_client_id(request))

@@ -1,171 +1,377 @@
-﻿# BharatVoice — Stage 1: Chrome Extension Foundation
+﻿# BharatVoice
 
-BharatVoice is a multilingual, voice-first accessibility assistant that helps
-Indian citizens understand and navigate government websites in their own
-languages. This repository contains **Stage 1**: a working, installable Chrome
-Extension (Manifest V3) with a side panel UI and a real browser speech
-recognition/synthesis foundation. The assistant in Stage 1 is a **local
-demonstration only** — there is no AI backend, no government data, and no
-scheme verification yet (those come in later stages).
+BharatVoice is a multilingual, voice-first Chrome extension that helps people
+understand Indian government websites and forms. A React/TypeScript side panel
+handles text and browser speech, while a small FastAPI backend calls Google
+Gemini to generate replies. The extension never contains a provider API key.
 
-## What Stage 1 includes
+## Architecture
 
-- **Chrome Extension Manifest V3** with a background service worker and the
-  Chrome Side Panel API (clicking the extension icon opens the side panel).
-- **React + TypeScript** side panel, built with **Vite**.
-- **UI**: BharatVoice branding, description, Telugu/Hindi/English language
-  selector, microphone button, text input, send button, conversation area
-  (user + assistant messages), listening/processing/speaking indicators,
-  error and permission messages, stop-speech button, and clear-conversation
-  control. Designed for Chrome's narrow side panel, with keyboard navigation
-  and focus styles.
-- **Real voice interaction**: browser `SpeechRecognition` (`te-IN`, `hi-IN`,
-  `en-IN`) where available, with recognized text shown in the input so users
-  can edit or correct it before sending; `speechSynthesis` playback for
-  assistant responses in the selected language; stop button; graceful handling
-  of unsupported browsers, denied permissions, and recognition errors. Text
-  input always works as an alternative.
-- **Deterministic demonstration assistant**: accepts typed or recognized
-  speech, shows the user's question, and returns a clearly identified demo
-  response (never presented as real AI or verified government information).
-- **Modular architecture**: extension config, background worker, React UI,
-  voice input/output, conversation handling, browser messaging, and
-  content-script integration points kept separate, ready for Stage 2 (AI) and
-  Stage 3 (contextual webpage help).
-
-## Project structure
-
+```text
+Chrome side panel (React + TypeScript)
+  ├── typed text or browser SpeechRecognition
+  ├── POST /api/chat  { message, language }  ─────────────┐
+  │                                                       │
+  └── browser speechSynthesis reads the reply             │
+                                                          ▼
+                                             FastAPI backend (Python)
+                                               └── google-genai ──► Gemini API
 ```
-bharatvoice/
-├── public/                 # Copied verbatim into dist/
-│   ├── manifest.json       # Manifest V3 extension manifest
-│   └── icons/              # Extension icons (SVG)
+
+- Only the **current message** and language code are sent to the backend; chat
+  history is not uploaded.
+- The backend is stateless. It does not use a database, accounts, analytics, or
+  persistent conversation storage, and it does not log message or reply content.
+- `GEMINI_API_KEY` exists only in the backend environment.
+- The extension's `host_permissions` and CSP `connect-src` are generated from the
+  configured backend origin at build time. No wildcard host permission is used.
+
+### Repository layout
+
+```text
+BharatVoice/
 ├── src/
-│   ├── background/service-worker.ts   # Service worker: side panel setup
-│   ├── messaging.ts                   # Typed message contract (Stages 2-3 ready)
-│   ├── types.ts                       # Shared types
-│   ├── locales.ts                     # en / hi / te UI strings
-│   ├── assistant.ts                   # Stage 1 deterministic demo assistant
-│   ├── voice/speech.ts                # SpeechRecognition / speechSynthesis wrappers
-│   ├── hooks/useSpeech.ts             # React voice hook
-│   └── sidepanel/
-│       ├── index.html                 # Side panel entry point
-│       ├── main.tsx                   # React bootstrap
-│       ├── App.tsx                    # Shell: conversation, input, status
-│       ├── index.css                  # Lightweight purpose-built styles
-│       └── components/                # BrandHeader, LanguageSelector, Conversation,
-│                                      # MessageBubble, StatusBanner, InputArea
-├── package.json
-├── tsconfig.json
-├── vite.config.ts                     # Multi-entry Vite build (side panel + service worker)
-└── README.md
+│   ├── api.ts                    # Typed backend client, timeout + cancellation
+│   ├── locales.ts                # English / Hindi / Telugu UI strings
+│   ├── voice/speech.ts           # SpeechRecognition / speechSynthesis wrappers
+│   ├── hooks/useSpeech.ts        # Voice lifecycle and cancellation
+│   ├── background/               # Manifest V3 service worker
+│   ├── sidepanel/                # React side-panel app and components
+│   └── assistant.ts              # Unused legacy demo responses (not wired in)
+├── public/
+│   ├── manifest.json             # Source manifest; rewritten in dist/
+│   └── icons/
+├── backend/
+│   ├── app/                      # FastAPI app, config, schemas, Gemini provider
+│   ├── tests/                    # Offline API and provider tests
+│   ├── requirements.txt
+│   ├── requirements-dev.txt
+│   └── .env.example
+├── .env.example                  # Backend URL used at extension build time
+├── vite.config.ts                # Build, URL validation, manifest/CSP rewrite
+└── package.json
 ```
 
-## Scripts
+## Prerequisites
 
-| Script | Purpose |
-|--------|---------|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | Production build into `dist/` |
-| `npm run preview` | Serve `dist/` locally |
-| `npm run typecheck` | TypeScript check (`tsc --noEmit`) |
+- Windows PowerShell (commands below) or an equivalent shell.
+- Node.js 20+ and npm.
+- Python 3.10+.
+- Google Chrome 114+ (Side Panel API).
+- A Google Gemini API key from
+  <https://aistudio.google.com/app/apikey>.
 
-## Building
+## Setup and run (Windows PowerShell)
 
-```bash
+### 1. Install and build the extension
+
+```powershell
+cd E:\BharatVoice
 npm install
+npm run typecheck
 npm run build
 ```
 
-The build output in `dist/` contains:
-- `manifest.json` — valid Manifest V3
-- `background/service-worker.js` — background service worker (module)
-- `sidepanel/index.html` — side panel entry point
-- `sidepanel/assets/` — bundled JS + CSS
-- `icons/` — extension icons
+The default build targets `http://localhost:8000`. See
+[Backend URL configuration](#backend-url-configuration) before deploying.
 
-## Loading into Chrome ("Load unpacked")
+### 2. Load the extension and note its ID
 
-1. Open Chrome and go to `chrome://extensions`.
-2. Enable **Developer mode** (toggle at top right).
-3. Click **Load unpacked** and select the `dist/` folder of this project.
-4. The **BharatVoice** extension appears in your toolbar. Click its icon — the
-   side panel opens alongside the current page (if the side panel does not
-   open, click the extension icon again or check `chrome://extensions` →
-   BharatVoice → "Side panel" permissions).
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select `E:\BharatVoice\dist`.
+4. Note the extension ID shown on the BharatVoice card. It looks like
+   `abcdefghijklmnopqrstuvwxyzabcdef`.
 
-## How to test Stage 1
+After changing extension source or the backend URL, run `npm run build` again
+and click **Reload** on the extension card.
 
-1. Open any website (e.g. a government portal) and click the BharatVoice icon.
-   The side panel opens without navigating away.
-2. The panel greets you in the selected language (English by default).
-3. Change the language using the selector (Telugu / Hindi / English). The
-   greeting restarts in the new language.
-4. Type a question in the text input and press **Send** (or Enter). The demo
-   assistant replies and reads the reply aloud (if a suitable synthesis voice
-   is installed). Every assistant reply ends with a disclaimer stating this is
-   a Stage 1 demonstration, not real AI or verified government information.
-5. Click the microphone button (**🎙**) to speak. Recognized text appears in
-   the input box — edit it if needed, then send. Grant microphone permission
-   when prompted.
-6. While the assistant is speaking or while listening, a **⏹ Stop** button is
-   visible to halt speech/listening.
-7. **Clear conversation** resets the chat.
-8. If speech recognition is unsupported in your browser, a notice appears and
-   typing continues to work; microphone denial shows a permission message.
+### 3. Create the backend virtual environment and configuration
 
-## What Stage 1 deliberately does NOT include
+```powershell
+cd E:\BharatVoice\backend
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+Copy-Item .env.example .env
+notepad .env
+```
 
-No Gemini/LLM API, no backend, no database, no authentication, no government
-scheme data or scraping, no automated form filling, no WhatsApp/email, and no
-API keys in extension code. See the product roadmap (Stage 2–5) for what is
-planned next.
+Set at least:
 
-## Manual testing note
+```dotenv
+GEMINI_API_KEY=your_real_gemini_key
+CORS_ORIGINS=chrome-extension://YOUR_EXTENSION_ID
+```
 
-This environment cannot drive Chrome automatically, so "Load unpacked" and the
-voice interactions above must be verified manually. Browser speech
-recognition/synthesis support varies by operating system and Chrome version;
-Telugu/Hindi recognition is available only where the browser provides it.
-Unsupported voice features are surfaced as explicit UI messages rather than
-silent failures.
+`CORS_ORIGINS` must be the exact origin from step 2. Do not use `*`. If
+PowerShell blocks activation, either run
+`Set-ExecutionPolicy -Scope Process Bypass` in that terminal or use
+`.\.venv\Scripts\python.exe` directly instead of activating.
+
+### 4. Start the backend
+
+```powershell
+cd E:\BharatVoice\backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Or without activation:
+
+```powershell
+cd E:\BharatVoice\backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Check it:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/healthz | ConvertTo-Json
+```
+
+Expected shape:
+
+```json
+{ "status": "ok", "provider": "gemini", "configured": true }
+```
+
+`configured` only reports whether a key is present; it does not verify that the
+key or model is valid. Make a real chat request to test that.
+
+### 5. Use the extension
+
+Click the BharatVoice toolbar icon to open the side panel. Type a question or
+use the microphone, then press **Send**. Replies are shown as plain text and
+read aloud when a matching browser voice is available.
+
+## Gemini key and model
+
+1. Sign in to Google AI Studio and create a key at
+   <https://aistudio.google.com/app/apikey>.
+2. Put it only in `backend/.env` as `GEMINI_API_KEY=...`.
+3. Never put it in the extension, `VITE_*`/`BHARATVOICE_*` variables, source
+   control, screenshots, or issue reports.
+
+The backend uses the official `google-genai` Python SDK. The default model is
+`gemini-3.5-flash-lite`; override it with `GEMINI_MODEL`. Model availability and
+free-tier quotas depend on your Google account and can change. If a model is not
+available to your key, choose another supported Gemini Flash/Flash-Lite model.
+A `gemini-3.8-flash` model can be used as an alternative but may have a lower
+free daily quota. This project does not guarantee free-tier access.
+
+## Backend URL configuration
+
+The extension's backend origin is a **build-time** setting:
+
+- Preferred variable: `BHARATVOICE_BACKEND_URL`
+- Backward-compatible alias: `VITE_BACKEND_URL`
+- Default: `http://localhost:8000`
+
+Set it for one build in PowerShell:
+
+```powershell
+cd E:\BharatVoice
+$env:BHARATVOICE_BACKEND_URL = "https://bharatvoice-api.example.com"
+npm run build
+Remove-Item Env:BHARATVOICE_BACKEND_URL
+```
+
+Or copy `.env.example` to `.env` at the repository root and edit it:
+
+```dotenv
+BHARATVOICE_BACKEND_URL=https://bharatvoice-api.example.com
+```
+
+The build rejects values that are not bare origins. Rules:
+
+- Absolute `http://` or `https://` URL with a host.
+- No wildcard, credentials, path, query string, or fragment.
+- Plain HTTP is allowed only for loopback (`localhost`, `127.0.0.1`, `::1`).
+  A deployed backend must use HTTPS.
+
+On every successful build, Vite rewrites `dist/manifest.json` so:
+
+- `host_permissions` contains only `${BHARATVOICE_BACKEND_URL}/*`.
+- The extension-pages CSP contains
+  `connect-src 'self' ${BHARATVOICE_BACKEND_URL}`.
+
+After changing the URL you must rebuild **and** reload the unpacked extension.
+If the deployed backend is called from the extension, also add the extension's
+exact `chrome-extension://<id>` origin to `backend/.env` `CORS_ORIGINS`.
+
+## Environment variables
+
+### Backend (`backend/.env`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GEMINI_API_KEY` | empty (required) | Gemini key; backend-only secret. Requests return 503 when missing. |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Supported Gemini model name. |
+| `GEMINI_TIMEOUT_SECONDS` | `30` | Upstream deadline; also enforced with `asyncio.wait_for`. Range (0, 120]. |
+| `GEMINI_MAX_OUTPUT_TOKENS` | `512` | Reply-length cap for concise, read-aloud answers. Range 32-4096. |
+| `CORS_ORIGINS` | empty | Comma-separated exact origins, e.g. `chrome-extension://<id>`. `*` is rejected. |
+| `MAX_REQUEST_BODY_BYTES` | `4096` | Maximum request body size. |
+| `RATE_LIMIT_REQUESTS_PER_MINUTE` | `30` | Per-client-IP in-memory rate limit. |
+| `LOG_LEVEL` | `INFO` | Backend log level. Content is never logged. |
+
+### Extension build (repository root `.env` or shell)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BHARATVOICE_BACKEND_URL` | `http://localhost:8000` | Backend origin baked into the bundle, manifest, and CSP. |
+| `VITE_BACKEND_URL` | unset | Accepted alias for the same setting. |
+
+## Common commands
+
+```powershell
+# Frontend
+cd E:\BharatVoice
+npm run typecheck
+npm run build
+
+# Backend tests (offline; no key or network required)
+cd E:\BharatVoice\backend
+.\.venv\Scripts\python.exe -m pytest
+
+# Backend import check
+.\.venv\Scripts\python.exe -c "import app.main; print('import ok')"
+
+# Start backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Backend tests use a fake provider/client. They cover validation, language
+handling, missing keys, timeouts, auth/quota/unavailable errors, rate limiting,
+empty replies, request-size limits, log leakage, prompt construction, and SDK
+error mapping. They do not make live Gemini calls.
+
+## Privacy and data flow
+
+### What leaves the device
+
+1. When you press **Send**, the extension sends only that message and the
+   selected language code (`en`, `hi`, or `te`) to the configured backend.
+2. The backend adds a fixed system instruction and language instruction, then
+   sends the message to the Google Gemini API using the server-side key.
+3. Gemini returns generated text to the backend, which returns it to the
+   extension. The reply is displayed and may be read aloud by the browser.
+
+The conversation history is not sent. There is no page-content extraction,
+scraping, form filling, or automatic browsing.
+
+### What is stored
+
+- The extension keeps messages in React memory only while the side panel is
+  open. It uses no `localStorage`, `sessionStorage`, IndexedDB, `chrome.storage`,
+  cookies, or disk database. **Clear conversation** removes messages and stops
+  speech/recognition.
+- The backend has no database and does not persist messages or replies.
+- The backend logs request metadata only: HTTP method, path, status, latency,
+  and safe provider error category. It must not log message text, replies, API
+  keys, or raw provider exception text.
+- Client IP addresses are used transiently for the in-memory rate limiter. They
+  are not stored by this application.
+
+### Browser speech privacy
+
+- Speech recognition and synthesis are provided by Chrome and the operating
+  system. Whether recognition audio or synthesis is processed locally or sent to
+  an external service depends on Chrome/OS/voice configuration, not on
+  BharatVoice. BharatVoice cannot verify or control that path.
+- Do not describe browser speech as offline or private. Microphone use starts
+  only after an explicit click. The Stop button cancels recognition or playback.
+  Typing is always available and never requires the microphone.
+- Some voices may be missing. BharatVoice does not substitute an English voice
+  for Hindi/Telugu; it tells you when no matching read-aloud voice is installed.
+
+### Third parties
+
+- **Google Gemini** receives submitted message text selected for a chat request.
+- **Chrome/OS speech services** may receive audio if speech recognition is used,
+  depending on browser configuration.
+- There are no analytics, tracking pixels, telemetry, advertising, or other
+  third-party scripts.
+
+Do not submit OTPs, passwords, Aadhaar numbers, bank details, or other sensitive
+information. The backend instructs the model not to request or repeat such data,
+but this is a safety prompt, not a guarantee.
+
+## Limitations
+
+- No official government database, web browsing, retrieval, or verification. AI
+  replies can be incomplete or wrong and are not official scheme information.
+- No page context, form filling, scraping, accounts, or authentication.
+- Only the current message is sent; the model does not receive conversation
+  history.
+- Responses are non-streaming.
+- Browser speech recognition/synthesis coverage varies by Chrome/OS and installed
+  voices. Telugu/Hindi recognition may be unavailable.
+- The rate limiter is in-process and per instance. Multiple uvicorn workers or
+  replicas each keep separate counters. Use a shared API gateway/limiter for
+  production.
+- CORS must list the exact extension origin. An unpacked extension ID can change
+  if you load it from a different path.
+- The backend has no user authentication. If deployed publicly, put it behind an
+  authenticated gateway or restrict access; otherwise anyone who can reach it
+  can consume your Gemini quota.
+- Free-tier quotas, pricing, and model availability are controlled by Google and
+  can change.
+- Automated tests do not exercise Chrome UI, microphone hardware, browser
+  speech services, or a live Gemini key. See manual checks below.
+
+## Manual Chrome checks
+
+1. Build, reload the unpacked extension, and confirm `chrome://extensions` shows
+   no manifest or service-worker errors.
+2. Open the side panel. Confirm the privacy and AI disclaimers appear and the
+   language selector offers English, हिन्दी, and తెలుగు.
+3. Send an English question. Confirm the processing indicator appears, a real
+   Gemini reply is shown, and read-aloud works if an English voice exists.
+4. Switch to Hindi and Telugu. Confirm a new welcome appears and replies are in
+   the selected language. If no matching voice is installed, confirm the app says
+   so instead of speaking with an English voice.
+5. Use the microphone (if supported). Confirm the transcript appears in the
+   input, can be edited, and can be sent. Press Stop while listening.
+6. Send a request and press the stop control while it is processing. Confirm the
+   request is cancelled and no late reply is appended.
+7. Press Stop while speaking and confirm playback ends without an error banner.
+8. Press Clear conversation and confirm messages, input, and speech are cleared.
+9. Stop the backend and send a message. Confirm a localized "cannot reach the
+   backend" message appears and typing still works.
+10. Start the backend with `GEMINI_API_KEY` empty. Confirm `/healthz` reports
+    `configured: false` and chat returns a safe "not configured" message.
+11. Change `BHARATVOICE_BACKEND_URL`, rebuild, reload, and inspect
+    `dist/manifest.json`. Confirm `host_permissions` and CSP `connect-src`
+    contain only the new origin.
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---------|--------------------|
+| `The AI backend is not configured` (503) | `GEMINI_API_KEY` is empty or `.env` was not loaded. Edit `backend/.env` and restart uvicorn. |
+| Extension says it cannot reach the backend | Backend not running, wrong build-time URL, HTTPS/HTTP mismatch, or stale `dist/`. Start the backend, check `/healthz`, rebuild, reload. |
+| Browser console shows a CORS error | Add the exact `chrome-extension://<id>` to `CORS_ORIGINS`, comma-separated, and restart the backend. |
+| `429` / "assistant is busy" | Gemini quota or the local per-IP rate limit was hit. Wait, reduce requests, or check AI Studio quota. |
+| `502` "not configured correctly" | Invalid/revoked key, missing permission, or no access to the configured model. Test the key and set `GEMINI_MODEL`. |
+| `503` / `504` provider messages | Gemini is temporarily unavailable or slow. Retry; increase `GEMINI_TIMEOUT_SECONDS` only if appropriate. |
+| Manifest still points at localhost | `dist/` was not rebuilt. Run `npm run build` and reload the extension. |
+| Build fails with `BHARATVOICE_BACKEND_URL ...` | Use a bare origin. No wildcard, path, query, credentials, or plain HTTP outside localhost. |
+| `uvicorn` is not recognized | Activate `.venv` or run `.\.venv\Scripts\python.exe -m uvicorn ...`. |
+| PowerShell refuses `.ps1` activation | `Set-ExecutionPolicy -Scope Process Bypass`, then activate; or call `.\.venv\Scripts\python.exe` directly. |
+| Microphone permission denied | Allow microphone access for the extension in Chrome and Windows privacy settings. Typing still works. |
+| No Telugu/Hindi read-aloud voice | Install the language voice in Windows/Chrome speech settings. The app reports a missing voice rather than using English. |
+| Speech recognition network error | Chrome's recognition service needs connectivity/availability. Check connection or type instead. |
+| Port 8000 already in use | Stop the other process or run `--port 8001` and rebuild the extension with the matching URL. |
+
+## Secret-handling note
+
+`backend/.env`, `.env`, `backend/.venv`, and `dist/` are ignored by git. If a real
+key is ever committed, revoke it in Google AI Studio, remove it from history with
+the team's approved process, and rotate it. Never force-push or rewrite shared
+history without explicit approval.
 
 ## License
 
 Private — BharatVoice project.
-
-## Privacy and data handling (Stage 1)
-
-### What data BharatVoice processes
-
-- Text you type into the input box is held in memory only for the current side-panel session. It is passed to the local, deterministic demonstration assistant to generate a reply, then spoken aloud using the browser's built-in speech synthesis if you choose.
-- Recognized speech (when you press the microphone button) is captured by the browser's SpeechRecognition API and shown in the input box so you can edit or correct it before sending. BharatVoice itself does not record or store audio.
-- Language selection (Telugu/Hindi/English) is held in memory for the current session only.
-- Conversation history (user messages and assistant replies) is held in React component memory only while the side panel is open.
-
-### What BharatVoice stores
-
-- Nothing on disk. There is no localStorage, sessionStorage, IndexedDB, chrome.storage, cookies, or database. Conversation history, recognized speech, and any text you type exist only in memory for the current side-panel session and are cleared when you close the panel or click "Clear conversation."
-
-### What BharatVoice does NOT transmit
-
-- The extension itself makes no network requests — no fetch, XMLHttpRequest, WebSocket, or sendBeacon calls exist in the code.
-- BharatVoice does not send audio, recognized text, conversation contents, personal information, or webpage contents to a BharatVoice server or to any third-party AI service.
-- There are no analytics, tracking pixels, telemetry, or third-party scripts of any kind.
-
-### Browser speech-recognition privacy limitations
-
-BharatVoice uses Chrome's built-in SpeechRecognition API (te-IN, hi-IN, en-IN) where the browser provides it. Whether the browser sends your audio to an external speech-recognition service is determined by Chrome and your operating system, not by BharatVoice. BharatVoice cannot verify or control this, and does not label speech recognition as local or offline. If you are concerned about audio leaving your device, use the text-input alternative instead of the microphone button.
-
-### Microphone activation and controls
-
-- Microphone recognition starts only after you explicitly click the microphone button (a direct user action). There is no background or automatic recording.
-- A Stop button halts ongoing listening and speech playback.
-- Clear conversation removes all in-memory messages and stops speech.
-- Text input always works as an alternative to speaking; you never need to use the microphone.
-
-### Current limitations
-
-- Browser speech-recognition quality and language coverage (te-IN, hi-IN, en-IN) vary by Chrome version and operating system.
-- This privacy assessment is based on source-code inspection of the extension itself. It does not independently verify Chrome's internal speech-recognition behavior or your operating system's audio handling.
-- Do not interpret the absence of BharatVoice network requests as a guarantee that the browser or OS makes none.

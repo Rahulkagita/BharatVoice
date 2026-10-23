@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { LOCALES, type LanguageCode, type LocaleKey } from '../../locales';
+import { MAX_MESSAGE_LENGTH } from '../../types';
 
 interface InputAreaProps {
   value: string;
@@ -8,6 +9,7 @@ interface InputAreaProps {
   onMic: () => void;
   onStop: () => void;
   disabled: boolean;
+  processing: boolean;
   recognitionSupported: boolean;
   listening: boolean;
   speaking: boolean;
@@ -23,6 +25,7 @@ export default function InputArea({
   onMic,
   onStop,
   disabled,
+  processing,
   recognitionSupported,
   listening,
   speaking,
@@ -41,6 +44,8 @@ export default function InputArea({
 
   const canSend = value.trim().length > 0 && !disabled && !speaking;
   const micLabel = listening ? t('micStop', lang) : t('micStart', lang);
+  const showStop = listening || speaking || processing;
+  const stopLabel = processing && !listening && !speaking ? t('stopRequest', lang) : t('stopSpeech', lang);
 
   return (
     <div className="bv-input-area">
@@ -53,7 +58,7 @@ export default function InputArea({
         placeholder={t('placeholder', lang)}
         disabled={disabled}
         rows={2}
-        maxLength={500}
+        maxLength={MAX_MESSAGE_LENGTH}
         spellCheck={true}
         aria-label={t('placeholder', lang)}
         autoComplete="off"
@@ -76,12 +81,12 @@ export default function InputArea({
             {listening ? '⏹' : '🎙'}
           </span>
         </button>
-        {(listening || speaking) && (
+        {(showStop) && (
           <button
             className="bv-icon-button bv-icon-button--stop"
             onClick={onStop}
-            aria-label={t('stopSpeech', lang)}
-            title={t('stopSpeech', lang)}
+            aria-label={stopLabel}
+            title={stopLabel}
           >
             <span className="bv-icon-button-label" aria-hidden="true">⏹</span>
           </button>

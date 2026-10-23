@@ -1,5 +1,8 @@
 export type LanguageCode = 'en' | 'hi' | 'te';
 
+/** Keep in sync with MAX_MESSAGE_LENGTH in backend/app/schemas.py. */
+export const MAX_MESSAGE_LENGTH = 1000;
+
 export interface Language {
   code: LanguageCode;
   name: string;        // English name

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { LOCALES, type LanguageCode, type LocaleKey } from '../../locales';
+import { type LanguageCode, type LocaleKey } from '../../locales';
 
 interface StatusBannerProps {
   status: 'idle' | 'listening' | 'processing' | 'speaking';
@@ -33,7 +33,7 @@ export default function StatusBanner({
         <button
           className="bv-banner-dismiss"
           onClick={dismiss}
-          aria-label="Dismiss error"
+          aria-label={t('errorDismiss', lang)}
         >
           ✕
         </button>
@@ -81,7 +81,7 @@ export default function StatusBanner({
           ℹ
         </span>
         <span className="bv-banner-text">
-          Voice recognition is not available in this browser. Typing still works.
+          {t('voiceUnavailable', lang)}
         </span>
       </div>
     );
@@ -93,7 +93,7 @@ export default function StatusBanner({
         <span className="bv-banner-icon" aria-hidden="true">
           ◍
         </span>
-        <span className="bv-banner-text">Preparing voices…</span>
+        <span className="bv-banner-text">{t('preparingVoices', lang)}</span>
       </div>
     );
   }

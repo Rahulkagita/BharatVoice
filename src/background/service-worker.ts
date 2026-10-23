@@ -1,13 +1,13 @@
 /**
  * BharatVoice background service worker (Manifest V3).
  *
- * Stage 1 responsibilities:
+ * Responsibilities:
  *  - Configure the Side Panel API so clicking the extension action opens
  *    the side panel alongside the current page.
- *  - Provide a message port surface for future content-script (Stage 3)
- *    and backend (Stage 2) integration.
+ *  - Provide a message port surface for future content-script integration.
  *
- * No AI, no backend, no government data access happens here.
+ * Chat requests originate in the side panel (see src/api.ts); the service
+ * worker does not hold the Gemini key or make provider calls.
  */
 
 const EXTENSION_NAME = 'BharatVoice';

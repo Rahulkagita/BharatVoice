@@ -1,14 +1,25 @@
 """Pydantic request/response schemas for the /api/chat endpoint."""
 
-from pydantic import BaseModel, Field, constr
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field, StringConstraints
+
+# Keep this in sync with the extension's input limit and the backend docs.
+MAX_MESSAGE_LENGTH = 1000
+
+LanguageCode = Literal["en", "hi", "te"]
+
+MessageText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_MESSAGE_LENGTH),
+]
 
 
-# Supported languages mirror the extension's LanguageCode type.
 class ChatRequest(BaseModel):
-    message: constr(strip_whitespace=True, min_length=1, max_length=1000) = Field(
-        ..., description="The user's message (typed or recognized speech)."
+    message: MessageText = Field(
+        ..., description="The user's current message (typed or recognized speech)."
     )
-    language: str = Field(
+    language: LanguageCode = Field(
         default="en",
         description="Selected language code: en, hi, or te.",
     )
@@ -17,5 +28,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str = Field(..., description="The assistant's reply in the selected language.")
     provider: str = Field(..., description="AI provider that generated the reply (e.g. 'gemini').")
-    status: str = Field(..., description="'ok' when successful; 'error' otherwise.")
-    error: str | None = Field(default=None, description="Human-readable error message when status is 'error'.")
+    status: Literal["ok", "error"] = Field(
+        ..., description="'ok' when successful; 'error' otherwise."
+    )
+    error: str | None = Field(
+        default=None, description="Human-readable error message when status is 'error'."
+    )

@@ -2,7 +2,7 @@
   "name": "bharatvoice",
   "private": true,
   "version": "1.0.0",
-  "description": "Stage 1 — Working Chrome Extension Foundation for BharatVoice, a multilingual voice-first accessibility assistant for Indian government websites.",
+  "description": "Multilingual, voice-first accessibility assistant for Indian government websites, powered by a FastAPI backend and Google Gemini.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

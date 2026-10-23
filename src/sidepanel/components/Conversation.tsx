@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { ChatMessage } from '../../types';
+import type { LanguageCode, LocaleKey } from '../../locales';
 import MessageBubble from './MessageBubble';
 
 interface ConversationProps {
   messages: ChatMessage[];
+  t: (key: LocaleKey, currentLang: LanguageCode) => string;
+  lang: LanguageCode;
 }
 
-export default function Conversation({ messages }: ConversationProps) {
+export default function Conversation({ messages, t, lang }: ConversationProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,7 +26,7 @@ export default function Conversation({ messages }: ConversationProps) {
   if (messages.length === 0) {
     return (
       <div className="bv-conversation bv-conversation--empty" ref={containerRef}>
-        <p className="bv-empty-text">Start a conversation by typing or speaking above.</p>
+        <p className="bv-empty-text">{t('emptyConversation', lang)}</p>
       </div>
     );
   }

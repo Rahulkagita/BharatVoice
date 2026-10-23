@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { LANGUAGES, LOCALES, type LanguageCode, type LocaleKey } from '../locales';
+import { LOCALES, type LanguageCode, type LocaleKey } from '../locales';
 import { sendChat, BackendError, type ChatResponse } from '../api';
 import { useSpeech } from '../hooks/useSpeech';
-import type { ChatMessage } from '../types';
+import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../types';
 import BrandHeader from './components/BrandHeader';
 import LanguageSelector from './components/LanguageSelector';
 import Conversation from './components/Conversation';
@@ -13,6 +13,28 @@ function t(key: LocaleKey, lang: LanguageCode): string {
   return LOCALES[lang][key] ?? LOCALES.en[key];
 }
 
+function backendErrorMessage(err: BackendError, lang: LanguageCode): string {
+  // English users get the backend's precise, already-safe message. Other
+  // languages use localized generic messages because backend text is English.
+  if (lang === 'en' && err.message) return err.message;
+
+  switch (err.kind) {
+    case 'network':
+      return t('errorBackendNetwork', lang);
+    case 'timeout':
+      return t('errorBackendTimeout', lang);
+    case 'rate_limit':
+      return t('errorBackendBusy', lang);
+    case 'unavailable':
+    case 'provider':
+      return t('errorBackendUnavailable', lang);
+    case 'validation':
+      return t('errorBackendValidation', lang);
+    default:
+      return t('errorBackendUnknown', lang);
+  }
+}
+
 export default function App() {
   const [lang, setLang] = useState<LanguageCode>('en');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -21,7 +43,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
-  const sendCancelled = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
+  const requestSeq = useRef(0);
+  const welcomeTimerRef = useRef<number | null>(null);
 
   const {
     status,
@@ -37,7 +61,20 @@ export default function App() {
 
   const displayedError = error || voiceError || backendError;
 
-  // Greet the user in the selected language when the panel opens or language changes.
+  const abortPendingRequest = useCallback(() => {
+    requestSeq.current += 1;
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, []);
+
+  const clearAllErrors = useCallback(() => {
+    setError(null);
+    setBackendError(null);
+    clearVoiceError();
+  }, [clearVoiceError]);
+
+  // Greet the user in the selected language when the panel opens or the
+  // language changes. The timeout is cleared if the language changes again.
   useEffect(() => {
     const welcome: ChatMessage = {
       id: crypto.randomUUID(),
@@ -46,11 +83,17 @@ export default function App() {
       timestamp: Date.now(),
     };
     setMessages([welcome]);
-    const timer = setTimeout(() => {
+    welcomeTimerRef.current = window.setTimeout(() => {
+      welcomeTimerRef.current = null;
       speakText(t('welcome', lang));
     }, 600);
-    return () => clearTimeout(timer);
-  }, [lang, speakText, t]);
+    return () => {
+      if (welcomeTimerRef.current !== null) {
+        window.clearTimeout(welcomeTimerRef.current);
+        welcomeTimerRef.current = null;
+      }
+    };
+  }, [lang, speakText]);
 
   // Auto-scroll the conversation to the bottom.
   useEffect(() => {
@@ -60,11 +103,17 @@ export default function App() {
     }
   }, [messages]);
 
+  // Abort in-flight work when the panel closes. No state updates here.
+  useEffect(() => () => abortPendingRequest(), [abortPendingRequest]);
+
   const handleSend = useCallback(async () => {
-    const text = inputValue.trim();
+    const text = inputValue.trim().slice(0, MAX_MESSAGE_LENGTH);
     if (!text || processing) return;
 
-    sendCancelled.current = false;
+    const seq = ++requestSeq.current;
+    const controller = new AbortController();
+    requestRef.current = controller;
+
     setBackendError(null);
     setError(null);
     setInputValue('');
@@ -79,10 +128,12 @@ export default function App() {
     setProcessing(true);
 
     try {
-      const res: ChatResponse = await sendChat(text, lang);
+      const res: ChatResponse = await sendChat(text, lang, {
+        signal: controller.signal,
+      });
 
-      // Component may have unmounted or the user may have cleared/sent again.
-      if (sendCancelled.current) return;
+      // A newer request, Clear, Stop, or a language change superseded this one.
+      if (seq !== requestSeq.current) return;
 
       if (res.status === 'ok' && res.answer) {
         const assistantMessage: ChatMessage = {
@@ -94,20 +145,25 @@ export default function App() {
         setMessages((prev) => [...prev, assistantMessage]);
         speakText(res.answer);
       } else {
-        setBackendError(res.error ?? 'The assistant could not produce a reply.');
+        setBackendError(
+          lang === 'en' && res.error ? res.error : t('errorBackendUnknown', lang)
+        );
       }
     } catch (err) {
-      if (sendCancelled.current) return;
+      if (seq !== requestSeq.current) return;
+      if (err instanceof BackendError && err.kind === 'cancelled') return;
 
-      let msg: string;
       if (err instanceof BackendError) {
-        msg = err.message;
+        setBackendError(backendErrorMessage(err, lang));
       } else {
-        msg = 'An unexpected error occurred. Please try again.';
+        setBackendError(t('errorBackendUnknown', lang));
       }
-      setBackendError(msg);
     } finally {
-      if (!sendCancelled.current) setProcessing(false);
+      // Only the current request may clear the processing state.
+      if (seq === requestSeq.current) {
+        requestRef.current = null;
+        setProcessing(false);
+      }
     }
   }, [inputValue, processing, lang, speakText]);
 
@@ -123,29 +179,46 @@ export default function App() {
     setError(null);
     clearVoiceError();
     startListening((transcript) => {
-      setInputValue(transcript);
+      setInputValue(transcript.slice(0, MAX_MESSAGE_LENGTH));
     });
   }, [capabilities.recognition, status, stopListening, startListening, lang, clearVoiceError]);
 
   const handleStop = useCallback(() => {
-    stopAllSpeech();
+    abortPendingRequest();
     setProcessing(false);
-  }, [stopAllSpeech]);
+    stopAllSpeech();
+  }, [abortPendingRequest, stopAllSpeech]);
 
   const handleClear = useCallback(() => {
-    sendCancelled.current = true;
+    if (welcomeTimerRef.current !== null) {
+      window.clearTimeout(welcomeTimerRef.current);
+      welcomeTimerRef.current = null;
+    }
+    abortPendingRequest();
     setMessages([]);
     setInputValue('');
     setProcessing(false);
-    setBackendError(null);
-    setError(null);
+    clearAllErrors();
     stopAllSpeech();
-    clearVoiceError();
-  }, [stopAllSpeech, clearVoiceError]);
+  }, [abortPendingRequest, clearAllErrors, stopAllSpeech]);
 
-  const handleLangChange = useCallback((code: LanguageCode) => {
-    setLang(code);
-  }, []);
+  const handleLangChange = useCallback(
+    (code: LanguageCode) => {
+      if (code === lang) return;
+
+      // Do not let a reply in the old language arrive after the switch.
+      abortPendingRequest();
+      setProcessing(false);
+      clearAllErrors();
+      stopAllSpeech();
+      setLang(code);
+    },
+    [abortPendingRequest, clearAllErrors, stopAllSpeech, lang]
+  );
+
+  const handleDismissError = useCallback(() => {
+    clearAllErrors();
+  }, [clearAllErrors]);
 
   return (
     <div className="bv-app" role="region" aria-label="BharatVoice assistant">
@@ -158,24 +231,25 @@ export default function App() {
           <LanguageSelector lang={lang} onChange={handleLangChange} t={t} />
         </div>
         <StatusBanner
-          status={status}
+          status={processing ? 'processing' : status}
           error={displayedError}
           capabilities={capabilities}
           voicesReady={voicesReady}
           t={t}
           lang={lang}
-          onDismissError={() => setError(null)}
+          onDismissError={handleDismissError}
         />
         <div className="bv-conversation-wrapper" ref={conversationRef}>
-          <Conversation messages={messages} />
+          <Conversation messages={messages} t={t} lang={lang} />
         </div>
         <InputArea
           value={inputValue}
-          onChange={setInputValue}
+          onChange={(value) => setInputValue(value.slice(0, MAX_MESSAGE_LENGTH))}
           onSend={handleSend}
           onMic={handleMic}
           onStop={handleStop}
           disabled={processing}
+          processing={processing}
           recognitionSupported={capabilities.recognition}
           listening={status === 'listening'}
           speaking={status === 'speaking'}
@@ -191,11 +265,8 @@ export default function App() {
           >
             {t('clearConversation', lang)}
           </button>
-          <p className="bv-caption">
-            BharatVoice sends your message to a secure backend assistant.
-            Conversation history stays in memory while the panel is open and is
-            not stored on disk.
-          </p>
+          <p className="bv-caption">{t('privacyNote', lang)}</p>
+          <p className="bv-caption">{t('disclaimer', lang)}</p>
         </div>
       </div>
     </div>
