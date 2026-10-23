@@ -1,0 +1,24 @@
+{
+  "name": "bharatvoice",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Stage 1 — Working Chrome Extension Foundation for BharatVoice, a multilingual voice-first accessibility assistant for Indian government websites.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.293",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  }
+}
