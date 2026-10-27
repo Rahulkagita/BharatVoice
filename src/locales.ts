@@ -26,6 +26,11 @@ export const LANGUAGES: Language[] = [
   },
 ];
 
+/** BCP-47 tag for the HTML document language, shared with speech tags. */
+export function documentLanguageFor(code: LanguageCode): string {
+  return LANGUAGES.find((language) => language.code === code)?.recognitionLang ?? 'en-IN';
+}
+
 export type LocaleKey =
   | 'tagline'
   | 'description'
@@ -70,7 +75,7 @@ export const LOCALES: Locales = {
   en: {
     tagline: 'Voice-first help for Indian government websites',
     description:
-      'Ask in Telugu, Hindi, or English. Get help understanding forms, schemes, and eligibility — right on the page you are using.',
+      'Ask in Telugu, Hindi, or English. Get conversational help understanding forms, schemes, and eligibility. BharatVoice does not inspect or highlight content on the webpage you are viewing.',
     languageLabel: 'Language',
     placeholder: 'Type your question…',
     send: 'Send',
@@ -125,7 +130,7 @@ export const LOCALES: Locales = {
   hi: {
     tagline: 'भारतीय सरकारी वेबसाइटों के लिए वॉयस-आधारित सहायता',
     description:
-      'तेलुगु, हिंदी या अंग्रेजी में प्रश्न पूछें। फॉर्म, योजनाओं और पात्रता को समझने में सहायता पाएं — उसी पेज पर जहां आप काम कर रहे हैं।',
+      'तेलुगु, हिंदी या अंग्रेजी में प्रश्न पूछें। फॉर्म, योजनाओं और पात्रता को समझने में बातचीत के ज़रिए सहायता पाएं। भारतवॉयस अभी आपके द्वारा देखे जा रहे वेबपेज को नहीं पढ़ता और न ही उस पर कुछ हाइलाइट करता है।',
     languageLabel: 'भाषा',
     placeholder: 'अपना प्रश्न टाइप करें…',
     send: 'भेजें',
@@ -180,7 +185,7 @@ export const LOCALES: Locales = {
   te: {
     tagline: 'భారత ప్రభుత్వ వెబ్‌సైట్ల కోసం వాయిస్-ఆధారిత సహాయం',
     description:
-      'తెలుగు, హిందీ లేదా ఇంగ్లీష్‌లో ప్రశ్నలు అడగండి. ఫారమ్‌లు, పథకాలు మరియు అర్హతను అర్థం చేసుకోవడంలో మీరు ఉపయోగిస్తున్న పేజీపైనే సహాయం పొందండి.',
+      'తెలుగు, హిందీ లేదా ఇంగ్లీష్‌లో ప్రశ్నలు అడగండి. ఫారమ్‌లు, పథకాలు మరియు అర్హతను అర్థం చేసుకోవడంలో సంభాషణ ద్వారా సహాయం పొందండి. భారతవాయిస్ ప్రస్తుతం మీరు చూస్తున్న వెబ్ పేజీని చదవదు మరియు పేజీలో ఏదీ హైలైట్ చేయదు.',
     languageLabel: 'భాష',
     placeholder: 'మీ ప్రశ్నను టైప్ చేయండి…',
     send: 'పంపండి',

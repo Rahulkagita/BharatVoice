@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { LOCALES, type LanguageCode, type LocaleKey } from '../locales';
+import {
+  LOCALES,
+  documentLanguageFor,
+  type LanguageCode,
+  type LocaleKey,
+} from '../locales';
 import { sendChat, BackendError, type ChatResponse } from '../api';
 import { useSpeech } from '../hooks/useSpeech';
 import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../types';
@@ -45,7 +50,6 @@ export default function App() {
   const conversationRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const requestSeq = useRef(0);
-  const welcomeTimerRef = useRef<number | null>(null);
 
   const {
     status,
@@ -73,8 +77,15 @@ export default function App() {
     clearVoiceError();
   }, [clearVoiceError]);
 
-  // Greet the user in the selected language when the panel opens or the
-  // language changes. The timeout is cleared if the language changes again.
+  // Keep the document language in sync with the interface language so
+  // assistive technology pronounces the visible text correctly.
+  useEffect(() => {
+    document.documentElement.lang = documentLanguageFor(lang);
+  }, [lang]);
+
+  // Show a welcome message when the panel opens or the language changes.
+  // It is text only: automatic speech is unexpected for screen-reader users
+  // and can trigger a missing-voice error before the user asks anything.
   useEffect(() => {
     const welcome: ChatMessage = {
       id: crypto.randomUUID(),
@@ -83,17 +94,7 @@ export default function App() {
       timestamp: Date.now(),
     };
     setMessages([welcome]);
-    welcomeTimerRef.current = window.setTimeout(() => {
-      welcomeTimerRef.current = null;
-      speakText(t('welcome', lang));
-    }, 600);
-    return () => {
-      if (welcomeTimerRef.current !== null) {
-        window.clearTimeout(welcomeTimerRef.current);
-        welcomeTimerRef.current = null;
-      }
-    };
-  }, [lang, speakText]);
+  }, [lang]);
 
   // Auto-scroll the conversation to the bottom.
   useEffect(() => {
@@ -190,10 +191,6 @@ export default function App() {
   }, [abortPendingRequest, stopAllSpeech]);
 
   const handleClear = useCallback(() => {
-    if (welcomeTimerRef.current !== null) {
-      window.clearTimeout(welcomeTimerRef.current);
-      welcomeTimerRef.current = null;
-    }
     abortPendingRequest();
     setMessages([]);
     setInputValue('');

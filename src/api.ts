@@ -16,6 +16,8 @@ export interface ChatResponse {
   provider: string;
   status: 'ok' | 'error';
   error: string | null;
+  /** Server-generated correlation ID, echoed in the X-Request-ID header. */
+  request_id: string;
 }
 
 export type BackendErrorKind =
@@ -30,11 +32,30 @@ export type BackendErrorKind =
 /** Backend failure categories surfaced to the user as safe, generic messages. */
 export class BackendError extends Error {
   readonly kind: BackendErrorKind;
-  constructor(kind: BackendErrorKind, message: string) {
+  /** Correlation ID when the backend responded; null for transport failures. */
+  readonly requestId: string | null;
+
+  constructor(kind: BackendErrorKind, message: string, requestId: string | null = null) {
     super(message);
     this.name = 'BackendError';
     this.kind = kind;
+    this.requestId = requestId;
   }
+}
+
+const REQUEST_ID_HEADER = 'x-request-id';
+
+function requestIdFromHeader(res: Response): string | null {
+  const value = res.headers.get(REQUEST_ID_HEADER)?.trim();
+  return value || null;
+}
+
+function requestIdFromBody(body: unknown, fallback: string | null): string | null {
+  if (typeof body === 'object' && body !== null) {
+    const value = (body as { request_id?: unknown }).request_id;
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return fallback;
 }
 
 /** Backend origin injected by Vite. It is a bare origin (no trailing slash). */
@@ -101,27 +122,36 @@ export async function sendChat(
     // Non-2xx responses from the backend already carry safe user-facing
     // messages (validation, rate-limit, unavailable). Surface them as-is.
     if (!res.ok) {
+      const headerRequestId = requestIdFromHeader(res);
       let detail = '';
+      let bodyRequestId: string | null = null;
+      let parsedBody: unknown;
       try {
-        const body = (await res.json()) as Partial<ChatResponse>;
-        detail = typeof body.error === 'string' ? body.error : '';
+        parsedBody = await res.json();
+        if (typeof parsedBody === 'object' && parsedBody !== null) {
+          const candidate = parsedBody as Partial<ChatResponse>;
+          detail = typeof candidate.error === 'string' ? candidate.error : '';
+        }
+        bodyRequestId = requestIdFromBody(parsedBody, headerRequestId);
       } catch {
         /* ignore malformed error bodies */
       }
       const kind = kindForStatus(res.status);
       throw new BackendError(
         kind,
-        detail || `The assistant backend responded with status ${res.status}.`
+        detail || `The assistant backend responded with status ${res.status}.`,
+        bodyRequestId ?? headerRequestId
       );
     }
 
-    let data: ChatResponse;
+    let data: Partial<ChatResponse>;
     try {
-      data = (await res.json()) as ChatResponse;
+      data = (await res.json()) as Partial<ChatResponse>;
     } catch {
       throw new BackendError(
         'provider',
-        'The assistant backend sent an invalid response. Please try again.'
+        'The assistant backend sent an invalid response. Please try again.',
+        requestIdFromHeader(res)
       );
     }
 
@@ -130,6 +160,7 @@ export async function sendChat(
       provider: typeof data.provider === 'string' ? data.provider : 'gemini',
       status: data.status === 'ok' ? 'ok' : 'error',
       error: typeof data.error === 'string' ? data.error : null,
+      request_id: requestIdFromBody(data, requestIdFromHeader(res)) ?? '',
     };
   } catch (err) {
     if (controller.signal.aborted) {

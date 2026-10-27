@@ -8,6 +8,7 @@ import logging
 
 from app import deps, main
 from app.deps import RateLimiter
+from app.request_context import REQUEST_ID_HEADER
 from app.schemas import MAX_MESSAGE_LENGTH
 from app.services.ai_provider import ProviderError
 
@@ -29,6 +30,14 @@ def _post(client, message: str, language: str = "en"):
     return client.post("/api/chat", json={"message": message, "language": language})
 
 
+def _assert_request_id(response, body: dict) -> str:
+    """Every response carries a server-generated ID in both header and body."""
+    request_id = body.get("request_id")
+    assert isinstance(request_id, str) and request_id
+    assert response.headers.get(REQUEST_ID_HEADER) == request_id
+    return request_id
+
+
 def _assert_error_shape(response, status_code: int) -> dict:
     assert response.status_code == status_code
     body = response.json()
@@ -36,6 +45,7 @@ def _assert_error_shape(response, status_code: int) -> dict:
     assert body["answer"] == ""
     assert body["provider"] == "gemini"
     assert isinstance(body["error"], str) and body["error"]
+    _assert_request_id(response, body)
     return body
 
 
@@ -43,7 +53,11 @@ def test_health_without_api_key(client, configure):
     configure(GEMINI_API_KEY="")
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "provider": "gemini", "configured": False}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["provider"] == "gemini"
+    assert body["configured"] is False
+    _assert_request_id(response, body)
 
 
 def test_health_does_not_expose_api_key(client, configure):
@@ -71,13 +85,42 @@ def test_successful_chat(client, configure):
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {
-        "answer": "నమస్తే, ఇది పరీక్ష.",
-        "provider": "gemini",
-        "status": "ok",
-        "error": None,
-    }
+    assert body["answer"] == "నమస్తే, ఇది పరీక్ష."
+    assert body["provider"] == "gemini"
+    assert body["status"] == "ok"
+    assert body["error"] is None
+    _assert_request_id(response, body)
     assert provider.calls == [("What is this form?", "te")]
+
+
+def test_each_request_gets_a_distinct_request_id(client, configure):
+    configure()
+    main._provider = FakeProvider()
+
+    first = _post(client, "hello")
+    second = _post(client, "hello again")
+
+    first_id = _assert_request_id(first, first.json())
+    second_id = _assert_request_id(second, second.json())
+    assert first_id != second_id
+
+
+def test_client_supplied_request_id_is_ignored(client, configure):
+    configure()
+    main._provider = FakeProvider()
+    supplied = "client-controlled-id\ninjected=true"
+
+    response = client.post(
+        "/api/chat",
+        json={"message": "hello", "language": "en"},
+        headers={REQUEST_ID_HEADER: supplied},
+    )
+
+    assert response.status_code == 200
+    request_id = _assert_request_id(response, response.json())
+    assert request_id != supplied
+    assert "injected=true" not in response.text
+    assert "\n" not in request_id
 
 
 def test_only_current_message_is_forwarded(client, configure):
@@ -146,6 +189,121 @@ def test_oversized_body_is_rejected(client, configure):
     _assert_error_shape(response, 413)
 
 
+def test_chunked_body_over_limit_is_rejected(client, configure):
+    configure(MAX_REQUEST_BODY_BYTES=512)
+    main._provider = FakeProvider()
+
+    def chunks():
+        # Deliberately no Content-Length: the limiter must count the stream.
+        yield b"x" * 300
+        yield b"x" * 300
+
+    response = client.post(
+        "/api/chat",
+        content=chunks(),
+        headers={"content-type": "application/json"},
+    )
+
+    body = _assert_error_shape(response, 413)
+    assert "too large" in body["error"]
+
+
+def test_understated_content_length_cannot_bypass_limit(client, configure):
+    configure(MAX_REQUEST_BODY_BYTES=512)
+    main._provider = FakeProvider()
+
+    response = client.post(
+        "/api/chat",
+        content=b"x" * 2000,
+        headers={"content-type": "application/json", "content-length": "10"},
+    )
+
+    _assert_error_shape(response, 413)
+
+
+def test_invalid_content_length_is_rejected(client, configure):
+    configure()
+    main._provider = FakeProvider()
+
+    response = client.post(
+        "/api/chat",
+        content=b"{}",
+        headers={"content-type": "application/json", "content-length": "not-a-number"},
+    )
+
+    body = _assert_error_shape(response, 400)
+    assert "Content-Length" in body["error"]
+
+
+def test_duplicate_content_length_headers_rejected(client, configure):
+    configure()
+    main._provider = FakeProvider()
+
+    response = client.post(
+        "/api/chat",
+        content=b'{"message":"hi","language":"en"}',
+        headers=[
+            ("content-type", "application/json"),
+            ("content-length", "25"),
+            ("content-length", "25"),
+        ],
+    )
+
+    body = _assert_error_shape(response, 400)
+    assert "Content-Length" in body["error"]
+
+
+def test_body_exactly_at_limit_is_accepted(client, configure):
+    configure(MAX_REQUEST_BODY_BYTES=512)
+    main._provider = FakeProvider(answer="ok")
+    # Create a valid JSON body of exactly 512 bytes
+    message = "x" * 10
+    payload = {"message": message, "language": "en"}
+    import json
+
+    body_str = json.dumps(payload)
+    # Adjust to make it exactly 512 bytes if needed
+    while len(body_str.encode("utf-8")) < 512:
+        payload["message"] = message + "x"
+        message = payload["message"]
+        body_str = json.dumps(payload)
+    if len(body_str.encode("utf-8")) > 512:
+        payload["message"] = message[: len(message) - (len(body_str.encode("utf-8")) - 512)]
+        body_str = json.dumps(payload)
+    assert len(body_str.encode("utf-8")) == 512
+
+    response = client.post(
+        "/api/chat",
+        content=body_str.encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 200
+
+
+def test_body_one_byte_over_limit_is_rejected(client, configure):
+    configure(MAX_REQUEST_BODY_BYTES=512)
+    main._provider = FakeProvider()
+    import json
+
+    payload = {"message": "x" * 50, "language": "en"}
+    body_str = json.dumps(payload)
+    # Make it 513 bytes
+    while len(body_str.encode("utf-8")) < 513:
+        payload["message"] = payload["message"] + "x"
+        body_str = json.dumps(payload)
+    if len(body_str.encode("utf-8")) > 513:
+        payload["message"] = payload["message"][: len(payload["message"]) - (len(body_str.encode("utf-8")) - 513)]
+        body_str = json.dumps(payload)
+    assert len(body_str.encode("utf-8")) == 513
+
+    response = client.post(
+        "/api/chat",
+        content=body_str.encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    _assert_error_shape(response, 413)
+
+
 def test_missing_api_key_returns_503_without_calling_provider(client, configure):
     configure(GEMINI_API_KEY="")
     provider = FakeProvider()
@@ -168,7 +326,8 @@ def test_provider_auth_failure_returns_safe_502(client, configure):
     configure()
     main._provider = FakeProvider(error=ProviderError("auth"))
 
-    body = _assert_error_shape(_post(client, "hello"), 502)
+    response = _post(client, "hello")
+    body = _assert_error_shape(response, 502)
     assert "configured correctly" in body["error"]
     assert "key" not in response_text(body).lower()
 

@@ -34,3 +34,7 @@ class ChatResponse(BaseModel):
     error: str | None = Field(
         default=None, description="Human-readable error message when status is 'error'."
     )
+    request_id: str = Field(
+        ...,
+        description="Server-generated request identifier for support and logging.",
+    )
